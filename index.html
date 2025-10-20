@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>简洁文字编辑器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background-color: #4a6fa5;
+            color: white;
+            padding: 15px 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            font-weight: 500;
+        }
+        
+        .toolbar {
+            background-color: #f8f9fa;
+            padding: 10px 20px;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .status {
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .editor-container {
+            padding: 20px;
+        }
+        
+        #editor {
+            width: 100%;
+            min-height: 600px;
+            padding: 15px;
+            font-size: 16px;
+            line-height: 1.8;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: vertical;
+            font-family: inherit;
+        }
+        
+        #editor:focus {
+            outline: none;
+            border-color: #4a6fa5;
+            box-shadow: 0 0 0 2px rgba(74, 111, 165, 0.2);
+        }
+        
+        .footer {
+            background-color: #f8f9fa;
+            padding: 15px 20px;
+            text-align: center;
+            font-size: 14px;
+            color: #666;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            
+            .toolbar {
+                flex-direction: column;
+                gap: 10px;
+                align-items: flex-start;
+            }
+            
+            #editor {
+                min-height: 400px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>简洁文字编辑器</h1>
+        </div>
+        <div class="toolbar">
+            <div class="status">
+                <span id="char-count">0</span> 字 | 
+                <span id="word-count">0</span> 词 | 
+                <span id="last-saved">未保存</span>
+            </div>
+            <button id="clear-btn" onclick="clearContent()">清空内容</button>
+        </div>
+        <div class="editor-container">
+            <textarea id="editor" placeholder="在此输入或修改文字内容..."></textarea>
+        </div>
+        <div class="footer">
+            <p>无需登录，所有更改自动保存。支持最多700万字的内容存储。</p>
+        </div>
+    </div>
+
+    <script>
+        // 初始化数据库
+        let db;
+        const DB_NAME = 'textEditorDB';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'textContents';
+        const CONTENT_KEY = 'mainContent';
+        
+        // 打开或创建IndexedDB数据库
+        function initDB() {
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+            
+            request.onerror = function(event) {
+                console.error('数据库打开失败:', event.target.error);
+            };
+            
+            request.onsuccess = function(event) {
+                db = event.target.result;
+                console.log('数据库连接成功');
+                loadContent();
+            };
+            
+            request.onupgradeneeded = function(event) {
+                db = event.target.result;
+                
+                // 创建存储对象
+                if (!db.objectStoreNames.contains(STORE_NAME)) {
+                    const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                }
+                console.log('数据库升级或创建成功');
+            };
+        }
+        
+        // 保存内容到数据库
+        function saveContent(content) {
+            if (!db) {
+                console.error('数据库未连接');
+                return;
+            }
+            
+            const transaction = db.transaction([STORE_NAME], 'readwrite');
+            const objectStore = transaction.objectStore(STORE_NAME);
+            
+            // 准备要保存的数据
+            const data = {
+                id: CONTENT_KEY,
+                content: content,
+                lastModified: new Date().toISOString()
+            };
+            
+            // 检查是否已存在记录
+            const getRequest = objectStore.get(CONTENT_KEY);
+            
+            getRequest.onsuccess = function() {
+                let request;
+                if (getRequest.result) {
+                    // 更新现有记录
+                    request = objectStore.put(data);
+                } else {
+                    // 添加新记录
+                    request = objectStore.add(data);
+                }
+                
+                request.onsuccess = function() {
+                    updateLastSaved();
+                    console.log('内容保存成功');
+                };
+                
+                request.onerror = function(event) {
+                    console.error('内容保存失败:', event.target.error);
+                };
+            };
+        }
+        
+        // 从数据库加载内容
+        function loadContent() {
+            if (!db) {
+                console.error('数据库未连接');
+                return;
+            }
+            
+            const transaction = db.transaction([STORE_NAME], 'readonly');
+            const objectStore = transaction.objectStore(STORE_NAME);
+            const request = objectStore.get(CONTENT_KEY);
+            
+            request.onsuccess = function() {
+                if (request.result) {
+                    const editor = document.getElementById('editor');
+                    editor.value = request.result.content;
+                    updateStats();
+                    updateLastSaved(request.result.lastModified);
+                    console.log('内容加载成功');
+                }
+            };
+            
+            request.onerror = function(event) {
+                console.error('内容加载失败:', event.target.error);
+            };
+        }
+        
+        // 清空内容
+        function clearContent() {
+            if (confirm('确定要清空所有内容吗？此操作无法撤销。')) {
+                document.getElementById('editor').value = '';
+                saveContent('');
+                updateStats();
+                console.log('内容已清空');
+            }
+        }
+        
+        // 更新统计信息
+        function updateStats() {
+            const editor = document.getElementById('editor');
+            const text = editor.value;
+            
+            // 字符数（包括空格和换行）
+            const charCount = text.length;
+            
+            // 词数（简单计算，中文每个字符算一个词，英文按空格分隔）
+            let wordCount = 0;
+            if (text.trim()) {
+                // 中文词数统计（每个汉字算一个词）
+                const chineseChars = text.match(/[\u4e00-\u9fa5]/g);
+                const chineseCount = chineseChars ? chineseChars.length : 0;
+                
+                // 英文词数统计
+                const englishWords = text.match(/[a-zA-Z]+/g);
+                const englishCount = englishWords ? englishWords.length : 0;
+                
+                wordCount = chineseCount + englishCount;
+            }
+            
+            // 更新显示
+            document.getElementById('char-count').textContent = charCount.toLocaleString();
+            document.getElementById('word-count').textContent = wordCount.toLocaleString();
+        }
+        
+        // 更新最后保存时间
+        function updateLastSaved(timestamp) {
+            const lastSavedEl = document.getElementById('last-saved');
+            const now = timestamp ? new Date(timestamp) : new Date();
+            const formattedTime = now.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            lastSavedEl.textContent = `最后保存: ${formattedTime}`;
+        }
+        
+        // 初始化应用
+        document.addEventListener('DOMContentLoaded', function() {
+            const editor = document.getElementById('editor');
+            
+            // 初始化数据库
+            initDB();
+            
+            // 监听输入事件，实时更新统计信息
+            editor.addEventListener('input', updateStats);
+            
+            // 自动保存功能
+            let saveTimeout;
+            editor.addEventListener('input', function() {
+                clearTimeout(saveTimeout);
+                saveTimeout = setTimeout(function() {
+                    saveContent(editor.value);
+                }, 1000); // 1秒后自动保存
+            });
+            
+            // 页面关闭前确保保存
+            window.addEventListener('beforeunload', function() {
+                saveContent(editor.value);
+            });
+        });
+    </script>
+</body>
+</html>
